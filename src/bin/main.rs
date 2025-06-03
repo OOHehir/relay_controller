@@ -3,6 +3,7 @@
 
 use embassy_executor::Spawner;
 use static_cell::StaticCell;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
@@ -13,23 +14,34 @@ use esp_hal::{
 };
 use log::info;
 
-const THRESHOLD: u16 = 1200;
+const THRESHOLD: u16 = 1800;
 
 #[embassy_executor::task]
 async fn led_func(mut led: Output<'static>) {
-    led.toggle();
-    Timer::after(Duration::from_secs(1)).await;
+    info!("LED task started");
+    loop {
+        led.set_high();
+        Timer::after(Duration::from_millis(500)).await;
+        led.set_low();
+        Timer::after(Duration::from_millis(500)).await;
+    }
 }
 
 #[embassy_executor::task]
 async fn control_relay(mut relay: Output<'static>, control: &'static Signal<CriticalSectionRawMutex, bool>, ) {
-    signal.wait().await;
-    signal.reset();
-    relay.set_high();
-    Timer::after(Duration::from_secs(5)).await;
-    relay.set_low();
-
-    // Quit here?
+    control.wait().await;
+    info!("Relay control signal received, activating relay...");
+    loop {
+        // Wait for the signal to be set
+        control.wait().await;
+        info!("Relay activated");
+        relay.set_high();
+        Timer::after(Duration::from_secs(5)).await;
+        relay.set_low();
+        info!("Relay deactivated");
+        // Reset the control signal
+        control.reset();
+    }
 }
 
 #[esp_hal_embassy::main]
@@ -45,8 +57,8 @@ async fn main(spawner: Spawner) {
     // Setup relay GPIO connected to ??
     let relay = Output::new(peripherals.GPIO9, Level::Low, OutputConfig::default());
 
-    // Setup ADC1 on GPIO2
-    let analog_pin = peripherals.GPIO2;
+    // Setup ADC1 on GPIO0
+    let analog_pin = peripherals.GPIO0;
     let mut adc1_config = AdcConfig::<esp_hal::peripherals::ADC1>::new();
     let mut pin = adc1_config.enable_pin(
         analog_pin,
@@ -61,24 +73,28 @@ async fn main(spawner: Spawner) {
     let _ = spawner;
     spawner.spawn(led_func(led)).ok();
 
-    static SIGNAL: StaticCell<Signal<NoopRawMutex, usize>> = StaticCell::new();
-    let control = &*SIGNAL.init(Signal::new());
-    spawner.spawn(control_relay(relay, &control)).ok();
+    static RELAY_CTRL: StaticCell<Signal<CriticalSectionRawMutex, bool>> = StaticCell::new();
+    let relay_ctrl_signal = &*RELAY_CTRL.init(Signal::new());
+    spawner.spawn(control_relay(relay, relay_ctrl_signal)).ok();
 
+    let mut previous_value: u16 = 0;
     loop {
         match nb::block!(adc1.read_oneshot(&mut pin)) {
             Ok(pin_value) => {
-                info!("ADC Value: {}", pin_value);
-                if pin_value < THRESHOLD {
-                    info!("Less than {}", THRESHOLD);
-                    // Activate relay
-                   // spawner.spawn(relay_func(relay));
+                if pin_value != previous_value {
+                    previous_value = pin_value;
+                    info!("ADC Value: {}", pin_value);
+                    if pin_value < THRESHOLD {
+                        info!("Less than {}", THRESHOLD);
+                        // Activate relay
+                       relay_ctrl_signal.signal(true);
+                    }
                 }
             },
             Err(e) => info!("ADC read error: {:?}", e),
         }
-        // led.toggle(led_func(led));
 
+        // Need a delay or otherwise spawned tasks will starve
         Timer::after(Duration::from_millis(200)).await;
     }
 }
