@@ -2,17 +2,17 @@
 #![no_main]
 
 use embassy_executor::Spawner;
-use static_cell::StaticCell;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
+    analog::adc::{Adc, AdcConfig, Attenuation},
     clock::CpuClock,
     gpio::{Level, Output, OutputConfig},
     timer::systimer::SystemTimer,
-    analog::adc::{Adc, AdcConfig, Attenuation},
 };
 use log::info;
+use static_cell::StaticCell;
 
 const THRESHOLD: u16 = 1800;
 
@@ -28,7 +28,10 @@ async fn led_func(mut led: Output<'static>) {
 }
 
 #[embassy_executor::task]
-async fn control_relay(mut relay: Output<'static>, control: &'static Signal<CriticalSectionRawMutex, bool>, ) {
+async fn control_relay(
+    mut relay: Output<'static>,
+    control: &'static Signal<CriticalSectionRawMutex, bool>,
+) {
     control.wait().await;
     info!("Relay control signal received, activating relay...");
     loop {
@@ -60,10 +63,7 @@ async fn main(spawner: Spawner) {
     // Setup ADC1 on GPIO0
     let analog_pin = peripherals.GPIO0;
     let mut adc1_config = AdcConfig::<esp_hal::peripherals::ADC1>::new();
-    let mut pin = adc1_config.enable_pin(
-        analog_pin,
-        Attenuation::_11dB,
-    );
+    let mut pin = adc1_config.enable_pin(analog_pin, Attenuation::_11dB);
     let mut adc1 = Adc::new(peripherals.ADC1, adc1_config);
 
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
@@ -87,10 +87,10 @@ async fn main(spawner: Spawner) {
                     if pin_value < THRESHOLD {
                         info!("Less than {}", THRESHOLD);
                         // Activate relay
-                       relay_ctrl_signal.signal(true);
+                        relay_ctrl_signal.signal(true);
                     }
                 }
-            },
+            }
             Err(e) => info!("ADC read error: {:?}", e),
         }
 
