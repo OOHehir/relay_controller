@@ -2,6 +2,7 @@
 #![no_main]
 
 use embassy_executor::Spawner;
+use static_cell::StaticCell;
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
@@ -12,6 +13,25 @@ use esp_hal::{
 };
 use log::info;
 
+const THRESHOLD: u16 = 1200;
+
+#[embassy_executor::task]
+async fn led_func(mut led: Output<'static>) {
+    led.toggle();
+    Timer::after(Duration::from_secs(1)).await;
+}
+
+#[embassy_executor::task]
+async fn control_relay(mut relay: Output<'static>, control: &'static Signal<CriticalSectionRawMutex, bool>, ) {
+    signal.wait().await;
+    signal.reset();
+    relay.set_high();
+    Timer::after(Duration::from_secs(5)).await;
+    relay.set_low();
+
+    // Quit here?
+}
+
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
@@ -20,7 +40,10 @@ async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(config);
 
     // Setup onboard LED connected to GPIO8
-    let mut led = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
+    let led = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
+
+    // Setup relay GPIO connected to ??
+    let relay = Output::new(peripherals.GPIO9, Level::Low, OutputConfig::default());
 
     // Setup ADC1 on GPIO2
     let analog_pin = peripherals.GPIO2;
@@ -36,13 +59,26 @@ async fn main(spawner: Spawner) {
 
     info!("Main..");
     let _ = spawner;
+    spawner.spawn(led_func(led)).ok();
+
+    static SIGNAL: StaticCell<Signal<NoopRawMutex, usize>> = StaticCell::new();
+    let control = &*SIGNAL.init(Signal::new());
+    spawner.spawn(control_relay(relay, &control)).ok();
 
     loop {
         match nb::block!(adc1.read_oneshot(&mut pin)) {
-            Ok(pin_value) => info!("ADC Value: {}", pin_value),
+            Ok(pin_value) => {
+                info!("ADC Value: {}", pin_value);
+                if pin_value < THRESHOLD {
+                    info!("Less than {}", THRESHOLD);
+                    // Activate relay
+                   // spawner.spawn(relay_func(relay));
+                }
+            },
             Err(e) => info!("ADC read error: {:?}", e),
         }
-        led.toggle();
+        // led.toggle(led_func(led));
+
         Timer::after(Duration::from_millis(200)).await;
     }
 }
