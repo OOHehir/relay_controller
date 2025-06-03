@@ -57,8 +57,8 @@ async fn main(spawner: Spawner) {
     // Setup onboard LED connected to GPIO8
     let led = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
 
-    // Setup relay GPIO connected to ??
-    let relay = Output::new(peripherals.GPIO9, Level::Low, OutputConfig::default());
+    // Setup relay GPIO connected to GPIO1
+    let relay = Output::new(peripherals.GPIO1, Level::Low, OutputConfig::default());
 
     // Setup ADC1 on GPIO0
     let analog_pin = peripherals.GPIO0;
