@@ -14,7 +14,8 @@ use esp_hal::{
 use log::info;
 use static_cell::StaticCell;
 
-const THRESHOLD: u16 = 1800;
+const ON_THRESHOLD: u16 = 2400;
+const OFF_THRESHOLD: u16 = 1800;
 
 #[embassy_executor::task]
 async fn led_func(mut led: Output<'static>) {
@@ -78,16 +79,22 @@ async fn main(spawner: Spawner) {
     spawner.spawn(control_relay(relay, relay_ctrl_signal)).ok();
 
     let mut previous_value: u16 = 0;
+    let mut was_running: bool = false;
     loop {
         match nb::block!(adc1.read_oneshot(&mut pin)) {
             Ok(pin_value) => {
                 if pin_value != previous_value {
                     previous_value = pin_value;
                     info!("ADC Value: {}", pin_value);
-                    if pin_value < THRESHOLD {
-                        info!("Less than {}", THRESHOLD);
+                    if pin_value > ON_THRESHOLD {
+                        was_running = true;
+                    }
+                    if pin_value < OFF_THRESHOLD && was_running {
+                        // i.e. just switched off, trigger once only
+                        info!("Less than {} & previous was running", OFF_THRESHOLD);
                         // Activate relay
                         relay_ctrl_signal.signal(true);
+                        was_running = false; // Reset the running state
                     }
                 }
             }
